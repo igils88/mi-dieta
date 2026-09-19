@@ -9,10 +9,12 @@
 'use strict';
 
 const APP_KEY = 'midieta.v1';
-const APP_VER = '1.0.0';
+const APP_VER = '1.1.0';
 
 const DIAS = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+const MESES_LARGOS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',
+                      'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 
 /* ============================================================
    1. Utilidades
@@ -95,11 +97,19 @@ function seccionDe(ingrediente) {
    2. Estado
    ============================================================ */
 
+const AJUSTES_POR_DEFECTO = {
+  tema: 'auto',
+  plan: null,              // {anclaClave, anclaIndice}
+  modoDias: 'todos',       // 'todos' | 'hoy'  → qué días salen desplegados
+  diasAbiertos: {},        // excepciones manuales por día: {0: true, 3: false…}
+  compraDietaAbierta: false,
+};
+
 const estadoInicial = () => ({
   version: 2,
   dietas: structuredClone(DIETAS),
   semanas: {},
-  ajustes: { tema: 'auto', plan: null },   // plan: {anclaClave, anclaIndice}
+  ajustes: { ...AJUSTES_POR_DEFECTO },
 });
 
 let estado = cargar();
@@ -113,7 +123,8 @@ function cargar() {
     const datos = JSON.parse(bruto);
     if (!datos || !Array.isArray(datos.dietas)) return estadoInicial();
     datos.semanas = datos.semanas || {};
-    datos.ajustes = Object.assign({ tema: 'auto', plan: null }, datos.ajustes);
+    datos.ajustes = Object.assign({}, AJUSTES_POR_DEFECTO, datos.ajustes);
+    datos.ajustes.diasAbiertos = datos.ajustes.diasAbiertos || {};
     return datos;
   } catch (e) {
     console.warn('No se pudo leer el almacenamiento:', e);
@@ -189,6 +200,14 @@ function progresoSemana(clave) {
   if (!s) return { hechos: 0, total: 0 };
   const ids = [...s.plan.comidas, ...s.plan.cenas].filter(Boolean);
   return { hechos: ids.filter(id => s.hechos[id]).length, total: ids.length };
+}
+
+/** ¿Sale desplegado este día? Manda la excepción manual; si no, el modo. */
+function diaAbierto(d) {
+  const manual = estado.ajustes.diasAbiertos || {};
+  if (manual[d] !== undefined) return !!manual[d];
+  if (estado.ajustes.modoDias === 'hoy') return esSemanaDeHoy(semanaVista) && d === indiceHoy();
+  return true;
 }
 
 /* ============================================================
@@ -280,7 +299,7 @@ function renderSemana() {
     const nHoy = getPlato(dieta, semana.plan.cenas[hoy]);
     const fecha = sumarDias(ini, hoy);
     html += `
-      <div class="hoy">
+      <div class="tarjeta-hoy">
         <div class="hoy-head">
           <b>Hoy · ${esc(DIAS[hoy])}</b>
           <span>${fecha.getDate()} ${MESES[fecha.getMonth()]}</span>
@@ -291,19 +310,39 @@ function renderSemana() {
       </div>`;
   }
 
+  const plegarTodos = estado.ajustes.modoDias !== 'hoy';
+  html += `
+    <div class="dias-toolbar">
+      <button data-accion="modo-dias" data-modo="${plegarTodos ? 'hoy' : 'todos'}">
+        ${plegarTodos ? 'Plegar todos menos hoy' : 'Desplegar todos los días'}
+      </button>
+    </div>`;
+
   for (let d = 0; d < 7; d++) {
     const fecha = sumarDias(ini, d);
-    const libre = !semana.plan.comidas[d] && !semana.plan.cenas[d];
+    const platoC = getPlato(dieta, semana.plan.comidas[d]);
+    const platoN = getPlato(dieta, semana.plan.cenas[d]);
+    const delDia = [platoC, platoN].filter(Boolean);
+    const libre = !delDia.length;
     const marcaHoy = actual && d === hoy;
+    const abierto = diaAbierto(d);
+    const hechosDia = delDia.filter(pl => semana.hechos[pl.id]).length;
+    const resumen = libre
+      ? 'Día libre'
+      : delDia.map(pl => pl.titulo).join(' · ');
+
     html += `
-      <div class="dia${marcaHoy ? ' is-hoy' : ''}">
-        <div class="dia-head">
+      <div class="dia${marcaHoy ? ' is-hoy' : ''}${abierto ? '' : ' is-plegado'}">
+        <button class="dia-head" data-accion="dia-toggle" data-d="${d}" aria-expanded="${abierto}">
           <span class="dia-nombre">${esc(DIAS[d])}</span>
           <span class="dia-fecha">${fecha.getDate()} ${MESES[fecha.getMonth()]}</span>
           ${marcaHoy ? '<span class="dia-badge hoy">Hoy</span>' : libre ? '<span class="dia-badge libre">Libre</span>' : ''}
-        </div>
-        ${slotHTML(dieta, semana, 'comidas', d)}
-        ${slotHTML(dieta, semana, 'cenas', d)}
+          ${!abierto && delDia.length ? `<span class="dia-cuenta">${hechosDia}/${delDia.length}</span>` : ''}
+          <span class="dia-chevron" aria-hidden="true"></span>
+        </button>
+        ${abierto
+          ? slotHTML(dieta, semana, 'comidas', d) + slotHTML(dieta, semana, 'cenas', d)
+          : `<p class="dia-resumen">${esc(resumen)}</p>`}
       </div>`;
   }
 
@@ -364,6 +403,39 @@ function ingredientesDe(dieta) {
   return Array.from(mapa.values());
 }
 
+/** Desplegable con la dieta completa en texto, para la pestaña de Compra. */
+function bloqueDietaHTML(dieta) {
+  const abierto = !!estado.ajustes.compraDietaAbierta;
+  const fijos = dieta.fijos || {};
+
+  const seccion = (titulo, lineas) => !lineas.length ? '' : `
+    <div class="dieta-bloque">
+      <h4>${esc(titulo)}</h4>
+      ${lineas.map(l => `<p>${esc(l)}</p>`).join('')}
+    </div>`;
+
+  const cuerpo = !abierto ? '' : `
+    <div class="dieta-texto">
+      ${seccion('Desayuno',     fijos.desayuno ? [fijos.desayuno] : [])}
+      ${seccion('Media mañana', fijos.media_manana ? [fijos.media_manana] : [])}
+      ${seccion('Comidas',      (dieta.comidas || []).map(pl => pl.titulo))}
+      ${seccion('Merienda',     fijos.merienda ? [fijos.merienda] : [])}
+      ${seccion('Cenas',        (dieta.cenas || []).map(pl => pl.titulo))}
+      ${dieta.notas ? `<div class="dieta-bloque"><h4>Nota</h4><p>${esc(dieta.notas)}</p></div>` : ''}
+    </div>`;
+
+  return `
+    <div class="group">
+      <div class="list">
+        <button class="row is-tappable" data-accion="compra-dieta-toggle" aria-expanded="${abierto}">
+          <div class="row-main"><div class="row-title">Ver la dieta de esa semana</div></div>
+          <span class="dia-chevron${abierto ? ' is-abierto' : ''}" aria-hidden="true"></span>
+        </button>
+        ${cuerpo}
+      </div>
+    </div>`;
+}
+
 function renderCompra() {
   const cont = $('#view-compra');
   const clave = claveSemanaSiguiente();
@@ -394,6 +466,8 @@ function renderCompra() {
       </div>
       <button class="semana-nav ancho" data-accion="elegir-dieta-compra">Cambiar</button>
     </div>
+
+    ${bloqueDietaHTML(dieta)}
 
     <div class="progreso" style="margin-bottom:22px">
       <div class="progreso-top">
@@ -458,6 +532,23 @@ function textoLista() {
    5. Vista: Ajustes
    ============================================================ */
 
+/** "Cambia a Dieta 2 el lunes 21 de septiembre" — el salto es siempre en lunes. */
+function textoProximoCambio() {
+  if (!estado.ajustes.plan) return 'Mueve el plan entero si te saltas o repites una semana';
+
+  const claveHoy = claveSemana(new Date());
+  const claveSig = claveSemanaSiguiente();
+  const actual = getDieta(dietaDeSecuencia(claveHoy));
+  const siguiente = getDieta(dietaDeSecuencia(claveSig));
+  const lunes = fechaDeClave(claveSig);
+  const cuando = `el lunes ${lunes.getDate()} de ${MESES_LARGOS[lunes.getMonth()]}`;
+
+  if (!actual || !siguiente) return 'Mueve el plan entero si te saltas o repites una semana';
+  return actual.id === siguiente.id
+    ? `Sigues con ${actual.nombre} ${cuando}`
+    : `Cambia a ${siguiente.nombre} ${cuando}`;
+}
+
 function renderAjustes() {
   const cont = $('#view-ajustes');
   const semana = getSemana(semanaVista);
@@ -472,7 +563,7 @@ function renderAjustes() {
         <button class="row is-tappable" data-accion="ajustar-plan">
           <div class="row-main">
             <div class="row-title">Semana del plan</div>
-            <div class="row-sub">Mueve el plan entero si te has saltado o repetido una semana</div>
+            <div class="row-sub">${esc(textoProximoCambio())}</div>
           </div>
           <span class="row-value">${nPlan ? nPlan + ' de ' + SECUENCIA.length : '—'}</span>
           <span class="row-chevron"></span>
@@ -1198,6 +1289,24 @@ document.addEventListener('click', ev => {
     case 'semana-next': semanaVista = claveSemana(sumarDias(fechaDeClave(semanaVista),  7)); renderSemana(); break;
     case 'ir-hoy':      semanaVista = claveSemana(new Date()); renderSemana(); window.scrollTo(0, 0); break;
 
+    case 'dia-toggle': {
+      const d = Number(el.dataset.d);
+      estado.ajustes.diasAbiertos = estado.ajustes.diasAbiertos || {};
+      estado.ajustes.diasAbiertos[d] = !diaAbierto(d);
+      guardar(); renderSemana();
+      break;
+    }
+    case 'modo-dias':
+      estado.ajustes.modoDias = el.dataset.modo;
+      estado.ajustes.diasAbiertos = {};   // el modo manda sobre los toques sueltos
+      guardar(); renderSemana();
+      break;
+
+    case 'compra-dieta-toggle':
+      estado.ajustes.compraDietaAbierta = !estado.ajustes.compraDietaAbierta;
+      guardar(); renderCompra();
+      break;
+
     case 'reordenar': {
       const s = getSemana(semanaVista);
       s.plan = planAuto(getDieta(s.dietaId));
@@ -1262,6 +1371,27 @@ document.addEventListener('click', ev => {
 
 document.addEventListener('pointerdown', onPointerDown, { passive: false });
 document.addEventListener('touchmove', e => { if (arrastre) e.preventDefault(); }, { passive: false });
+
+/* --- El día (y por tanto la semana) puede cambiar con la app abierta --- */
+let diaCargado = new Date().toDateString();
+
+function revisarCambioDeDia() {
+  const ahora = new Date().toDateString();
+  if (ahora === diaCargado) return;
+  diaCargado = ahora;
+
+  // Al cambiar el día, el plegado vuelve a seguir el modo elegido
+  // (si no, "todos menos hoy" seguiría señalando al día de ayer).
+  estado.ajustes.diasAbiertos = {};
+  semanaVista = claveSemana(new Date());
+  guardar();
+  renderTodo();
+}
+
+document.addEventListener('visibilitychange', () => { if (!document.hidden) revisarCambioDeDia(); });
+window.addEventListener('focus', revisarCambioDeDia);
+window.addEventListener('pageshow', revisarCambioDeDia);
+setInterval(revisarCambioDeDia, 60000);
 
 let ticking = false;
 window.addEventListener('scroll', () => {

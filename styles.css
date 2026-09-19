@@ -320,7 +320,7 @@ button {
 }
 
 /* ---------- Tarjeta de hoy ---------- */
-.hoy {
+.tarjeta-hoy {
   margin: 0 var(--gutter) 28px;
   background: var(--bg-elev);
   border-radius: var(--radius-lg);
@@ -352,8 +352,13 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 16px 8px;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px 10px;
 }
+
+.dia.is-plegado .dia-head { padding-bottom: 6px; }
+.dia-head:active { background: var(--fill); }
 
 .dia-nombre {
   font-size: 15px;
@@ -362,10 +367,9 @@ button {
   text-transform: capitalize;
 }
 
-.dia-fecha { font-size: 13px; color: var(--label-2); }
+.dia-fecha { font-size: 13px; color: var(--label-2); flex: 1; }
 
 .dia-badge {
-  margin-left: auto;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: .03em;
@@ -378,6 +382,105 @@ button {
 
 .dia-badge.hoy { background: var(--tint); color: #fff; }
 .dia-badge.libre { background: var(--naranja); color: #fff; }
+
+.dia-cuenta {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--label-2);
+}
+
+/* Flecha de plegado */
+.dia-chevron {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  position: relative;
+  color: var(--label-3);
+  transition: transform .25s var(--ease);
+  transform: rotate(90deg);
+}
+
+.dia-chevron::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 4.5px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  border-radius: 1px;
+  transform: rotate(-45deg);
+}
+
+.dia.is-plegado .dia-chevron { transform: rotate(0deg); }
+.dia-chevron.is-abierto { transform: rotate(90deg); }
+.row .dia-chevron { transform: rotate(0deg); }
+.row .dia-chevron.is-abierto { transform: rotate(90deg); }
+
+.dia-resumen {
+  margin: 0;
+  padding: 0 16px 12px;
+  font-size: 14px;
+  line-height: 1.35;
+  color: var(--label-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* Barra de plegar / desplegar */
+.dias-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 var(--gutter) 10px;
+}
+
+.dias-toolbar button {
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -.01em;
+  color: var(--tint);
+  padding: 6px 2px;
+}
+
+.dias-toolbar button:active { opacity: .5; }
+
+/* Dieta desplegada en la pestaña de Compra */
+.dieta-texto {
+  padding: 4px 16px 16px;
+  position: relative;
+}
+
+.dieta-texto::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 16px; right: 0;
+  height: .5px;
+  background: var(--separator);
+}
+
+.dieta-bloque { padding-top: 14px; }
+
+.dieta-bloque h4 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--label-2);
+}
+
+.dieta-bloque p {
+  margin: 0;
+  padding: 2px 0;
+  font-size: 15px;
+  line-height: 1.38;
+  letter-spacing: -.01em;
+}
 
 /* ---------- Huecos y chips ---------- */
 .slot {
