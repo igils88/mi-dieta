@@ -9,7 +9,7 @@
    la limpieza de la caché antigua.
    ============================================================ */
 
-const CACHE = 'midieta-v2';
+const CACHE = 'midieta-v3';
 
 const ARCHIVOS = [
   './',
@@ -23,10 +23,13 @@ const ARCHIVOS = [
   './icon-512.png',
 ];
 
+/* `cache: 'reload'` salta la caché HTTP del navegador: GitHub Pages sirve
+   los archivos con 10 minutos de vida, y sin esto una versión nueva podía
+   guardarse ya caducada y tardar en aparecer. */
 self.addEventListener('install', e => {
   e.waitUntil(
     caches.open(CACHE)
-      .then(c => c.addAll(ARCHIVOS))
+      .then(c => c.addAll(ARCHIVOS.map(u => new Request(u, { cache: 'reload' }))))
       .then(() => self.skipWaiting())
       .catch(() => self.skipWaiting())
   );
@@ -46,7 +49,7 @@ self.addEventListener('fetch', e => {
 
   e.respondWith(
     caches.match(req).then(cacheada => {
-      const red = fetch(req).then(resp => {
+      const red = fetch(new Request(req.url, { cache: 'no-cache' })).then(resp => {
         if (resp && resp.status === 200) {
           const copia = resp.clone();
           caches.open(CACHE).then(c => c.put(req, copia));
