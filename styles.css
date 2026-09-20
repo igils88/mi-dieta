@@ -304,6 +304,14 @@ button {
 .progreso-num { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
 .progreso-pct { font-size: 13px; color: var(--label-2); }
 
+/* De dónde vengo y dónde acaba el tramo, debajo de la barra. */
+.progreso-pie {
+  margin-top: 9px;
+  font-size: 12px;
+  color: var(--label-2);
+  line-height: 1.35;
+}
+
 .barra {
   height: 6px;
   border-radius: 3px;

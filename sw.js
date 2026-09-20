@@ -9,7 +9,7 @@
    la limpieza de la caché antigua.
    ============================================================ */
 
-const CACHE = 'midieta-v3';
+const CACHE = 'midieta-v4';
 
 const ARCHIVOS = [
   './',

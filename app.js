@@ -9,7 +9,7 @@
 'use strict';
 
 const APP_KEY = 'midieta.v1';
-const APP_VER = '1.1.0';
+const APP_VER = '1.2.0';
 
 const DIAS = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
@@ -103,6 +103,10 @@ const AJUSTES_POR_DEFECTO = {
   modoDias: 'todos',       // 'todos' | 'hoy'  → qué días salen desplegados
   diasAbiertos: {},        // excepciones manuales por día: {0: true, 3: false…}
   compraDietaAbierta: false,
+  // Barra de progreso de la cabecera: por qué dieta voy del plan.
+  // `desde` y `hasta` son NÚMEROS DE DIETA (los de los PDF), no
+  // semanas: la dieta 6 ocupa dos semanas y sigue siendo la 6.
+  progreso: { visible: true, desde: null, hasta: null },
 };
 
 const estadoInicial = () => ({
@@ -125,6 +129,9 @@ function cargar() {
     datos.semanas = datos.semanas || {};
     datos.ajustes = Object.assign({}, AJUSTES_POR_DEFECTO, datos.ajustes);
     datos.ajustes.diasAbiertos = datos.ajustes.diasAbiertos || {};
+    // Object.assign no entra en los objetos anidados: una copia
+    // guardada antes de que existiera `progreso` lo traería a medias.
+    datos.ajustes.progreso = Object.assign({}, AJUSTES_POR_DEFECTO.progreso, datos.ajustes.progreso);
     return datos;
   } catch (e) {
     console.warn('No se pudo leer el almacenamiento:', e);
@@ -202,6 +209,65 @@ function progresoSemana(clave) {
   return { hechos: ids.filter(id => s.hechos[id]).length, total: ids.length };
 }
 
+/* ------------------------------------------------------------
+   Por qué dieta voy
+   ------------------------------------------------------------
+   El número de la dieta sale de su nombre («Dieta 6 · semana 7»
+   → 6) y no de su posición en la secuencia. Son cosas distintas:
+   la dieta 1 ocupa las semanas 1 y 2 del plan, y la 6 las semanas
+   7 y 8. Lo que uno dice en voz alta es «voy por la 6», no «voy
+   por la semana 8».
+   ------------------------------------------------------------ */
+
+function numeroDieta(dieta) {
+  if (!dieta) return null;
+  const m = String(dieta.nombre || '').match(/(\d+)/);
+  return m ? Number(m[1]) : null;
+}
+
+/** El número de dieta más bajo y más alto que hay en el plan. */
+function rangoDietasDelPlan() {
+  const nums = SECUENCIA
+    .map(id => numeroDieta(getDieta(id)))
+    .filter(n => n != null);
+  return nums.length
+    ? { min: Math.min(...nums), max: Math.max(...nums) }
+    : { min: 1, max: 1 };
+}
+
+/**
+ * Lo que pinta la barra de la cabecera: en qué dieta estoy, desde
+ * cuál empecé y cuál es el objetivo. Devuelve null si está
+ * apagada o si no hay dieta esta semana.
+ */
+function progresoPlan(clave) {
+  const aj = estado.ajustes.progreso || {};
+  if (!aj.visible) return null;
+
+  const semana = getSemana(clave, false);
+  const actual = numeroDieta(getDieta(semana && semana.dietaId));
+  if (actual == null) return null;
+
+  const rango = rangoDietasDelPlan();
+  const desde = Number.isFinite(aj.desde) && aj.desde != null ? aj.desde : rango.min;
+  const hasta = Number.isFinite(aj.hasta) && aj.hasta != null ? aj.hasta : rango.max;
+
+  // Un objetivo por debajo del arranque no dice nada: se ignora y
+  // se cae al rango real del plan, que siempre tiene sentido.
+  const ini = Math.min(desde, hasta);
+  const fin = Math.max(desde, hasta);
+
+  // Se cuentan dietas, no saltos: estar en la primera de ocho es
+  // haber hecho una de ocho, no cero. Así el porcentaje concuerda
+  // con el «Dieta 1 de 8» que se lee al lado, que es lo que se
+  // mira primero.
+  const cuantas = fin - ini + 1;
+  const hechas = Math.min(Math.max(actual - ini + 1, 0), cuantas);
+  const pct = Math.round((hechas / cuantas) * 100);
+
+  return { actual, desde: ini, hasta: fin, pct, fuera: actual < ini || actual > fin };
+}
+
 /** ¿Sale desplegado este día? Manda la excepción manual; si no, el modo. */
 function diaAbierto(d) {
   const manual = estado.ajustes.diasAbiertos || {};
@@ -261,7 +327,6 @@ function renderSemana() {
   }
 
   const { hechos, total } = progresoSemana(semanaVista);
-  const pct = total ? Math.round((hechos / total) * 100) : 0;
   const hoy = indiceHoy();
   const actual = esSemanaDeHoy(semanaVista);
   const ini = fechaDeClave(semanaVista);
@@ -281,14 +346,22 @@ function renderSemana() {
     html += '<div class="btn-wrap"><button class="btn secundario" data-accion="ir-hoy">Volver a esta semana</button></div>';
   }
 
-  html += `
-    <div class="progreso">
-      <div class="progreso-top">
-        <span class="progreso-num">${hechos} de ${total} completadas</span>
-        <span class="progreso-pct">${pct}%</span>
-      </div>
-      <div class="barra"><i style="width:${pct}%"></i></div>
-    </div>`;
+  const avance = progresoPlan(semanaVista);
+  if (avance) {
+    html += `
+      <div class="progreso">
+        <div class="progreso-top">
+          <span class="progreso-num">Dieta ${avance.actual} de ${avance.hasta}</span>
+          <span class="progreso-pct">${avance.pct}%</span>
+        </div>
+        <div class="barra"><i style="width:${avance.pct}%"></i></div>
+        <div class="progreso-pie">
+          ${avance.fuera
+            ? `Fuera del tramo que sigues (dieta ${avance.desde} a la ${avance.hasta})`
+            : `Empezaste por la dieta ${avance.desde} · ${hechos} de ${total} comidas hechas esta semana`}
+        </div>
+      </div>`;
+  }
 
   if (dieta.notas) {
     html += `<div class="nota"><span>ℹ️</span><p>${esc(dieta.notas)}</p></div>`;
@@ -403,6 +476,12 @@ function ingredientesDe(dieta) {
   return Array.from(mapa.values());
 }
 
+/** «Compra para la dieta nº 6», con el número que lleva en el PDF. */
+function tituloCompraDieta(dieta) {
+  const n = numeroDieta(dieta);
+  return n != null ? `Compra para la dieta nº ${n}` : `Compra para ${dieta.nombre}`;
+}
+
 /** Desplegable con la dieta completa en texto, para la pestaña de Compra. */
 function bloqueDietaHTML(dieta) {
   const abierto = !!estado.ajustes.compraDietaAbierta;
@@ -428,7 +507,8 @@ function bloqueDietaHTML(dieta) {
     <div class="group">
       <div class="list">
         <button class="row is-tappable" data-accion="compra-dieta-toggle" aria-expanded="${abierto}">
-          <div class="row-main"><div class="row-title">Ver la dieta de esa semana</div></div>
+          <div class="row-main"><div class="row-title">${esc(tituloCompraDieta(dieta))}</div></div>
+          <span class="row-value">${abierto ? 'Cerrar' : 'Ver'}</span>
           <span class="dia-chevron${abierto ? ' is-abierto' : ''}" aria-hidden="true"></span>
         </button>
         ${cuerpo}
@@ -549,12 +629,104 @@ function textoProximoCambio() {
     : `Cambia a ${siguiente.nombre} ${cuando}`;
 }
 
+/** Resumen de una línea del ajuste de la barra, para la fila. */
+function textoProgreso() {
+  const aj = estado.ajustes.progreso || {};
+  if (!aj.visible) return 'No se muestra en la cabecera';
+
+  const rango = rangoDietasDelPlan();
+  const desde = aj.desde != null ? aj.desde : rango.min;
+  const hasta = aj.hasta != null ? aj.hasta : rango.max;
+  return `De la dieta ${Math.min(desde, hasta)} a la ${Math.max(desde, hasta)}`;
+}
+
+/* ---------- Ajuste de la barra de progreso ---------- */
+
+function selectorProgreso() {
+  const aj = estado.ajustes.progreso || {};
+  const rango = rangoDietasDelPlan();
+  const desde = aj.desde != null ? aj.desde : rango.min;
+  const hasta = aj.hasta != null ? aj.hasta : rango.max;
+
+  // Los números de dieta que existen de verdad, sin repetir: la
+  // dieta 6 sale una vez aunque ocupe dos semanas del plan.
+  const numeros = [...new Set(
+    SECUENCIA.map(id => numeroDieta(getDieta(id))).filter(n => n != null),
+  )].sort((a, b) => a - b);
+
+  const opciones = (sel) => numeros
+    .map(n => `<option value="${n}"${n === sel ? ' selected' : ''}>Dieta ${n}</option>`)
+    .join('');
+
+  const cuerpo = `
+    <div class="group">
+      <div class="list">
+        <div style="padding:12px 16px">
+          <div class="segmented" id="progVisible">
+            <button data-v="1" class="${aj.visible ? 'is-on' : ''}">Mostrar</button>
+            <button data-v="0" class="${aj.visible ? '' : 'is-on'}">Ocultar</button>
+          </div>
+        </div>
+      </div>
+      <p class="group-foot">La barra de la parte de arriba de la pestaña Semana.</p>
+    </div>
+
+    <div class="group" id="progRango">
+      <p class="group-title">El tramo que sigues</p>
+      <div class="list">
+        <div class="campo"><label>Empiezo por</label>
+          <select id="progDesde">${opciones(Math.min(desde, hasta))}</select></div>
+        <div class="campo"><label>Objetivo</label>
+          <select id="progHasta">${opciones(Math.max(desde, hasta))}</select></div>
+      </div>
+      <p class="group-foot">
+        La barra se llena entre esas dos dietas. Si te sales del tramo te lo
+        dice, en vez de quedarse clavada al 0 o al 100%.
+      </p>
+    </div>`;
+
+  const hoja = abrirHoja({
+    titulo: 'Barra de progreso',
+    cuerpo,
+    aceptar: 'Guardar',
+    onAceptar(h) {
+      const visible = h.querySelector('#progVisible .is-on').dataset.v === '1';
+      const d = Number(h.querySelector('#progDesde').value);
+      const t = Number(h.querySelector('#progHasta').value);
+      estado.ajustes.progreso = {
+        visible,
+        desde: Math.min(d, t),
+        hasta: Math.max(d, t),
+      };
+      guardar();
+      renderTodo();
+      toast(visible ? 'Progreso actualizado' : 'Progreso oculto');
+    },
+  });
+
+  const caja = hoja.querySelector('#progRango');
+  const pintarRango = () => {
+    caja.style.display = hoja.querySelector('#progVisible .is-on').dataset.v === '1' ? '' : 'none';
+  };
+
+  hoja.querySelectorAll('#progVisible button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      hoja.querySelectorAll('#progVisible button').forEach(b => b.classList.remove('is-on'));
+      btn.classList.add('is-on');
+      pintarRango();
+      vibrar(4);
+    });
+  });
+  pintarRango();
+}
+
 function renderAjustes() {
   const cont = $('#view-ajustes');
   const semana = getSemana(semanaVista);
   const dieta = getDieta(semana.dietaId);
   const tema = estado.ajustes.tema || 'auto';
   const nPlan = indicePlan(semanaVista);
+  const prog = estado.ajustes.progreso || {};
 
   cont.innerHTML = `
     <div class="group">
@@ -570,6 +742,14 @@ function renderAjustes() {
         </button>
         <button class="row is-tappable" data-accion="normas">
           <div class="row-main"><div class="row-title">Normas del plan</div></div>
+          <span class="row-chevron"></span>
+        </button>
+        <button class="row is-tappable" data-accion="ajustar-progreso">
+          <div class="row-main">
+            <div class="row-title">Barra de progreso</div>
+            <div class="row-sub">${esc(textoProgreso())}</div>
+          </div>
+          <span class="row-value">${prog.visible ? 'Visible' : 'Oculta'}</span>
           <span class="row-chevron"></span>
         </button>
       </div>
@@ -1319,6 +1499,7 @@ document.addEventListener('click', ev => {
       break;
 
     case 'ajustar-plan':  selectorPlan(false); break;
+    case 'ajustar-progreso': selectorProgreso(); break;
     case 'normas':        verNormas(); break;
     case 'nueva-dieta':   editorDieta(null); break;
     case 'editar-dieta':  editorDieta(el.dataset.dieta); break;
